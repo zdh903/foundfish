@@ -41,12 +41,21 @@ const Company: React.FC<CompanyProps> = ({ secid }) => {
     setCompany(company);
   }
 
+  // 根据 secid 前缀判断市场：1/0=A股，116=港股，105/106/107=美股，83/82=新三板
+  const getMarketType = (): Enums.StockMarketType => {
+    const prefix = secid.split('.')[0];
+    if (prefix === '116') return Enums.StockMarketType.HK;
+    if (['105', '106', '107'].includes(prefix)) return Enums.StockMarketType.US;
+    if (['83', '82'].includes(prefix)) return Enums.StockMarketType.XSB;
+    return Enums.StockMarketType.AB;
+  };
+
   useEffect(() => {
-    getCompany(Enums.StockMarketType.AB);
-  }, []);
+    getCompany(getMarketType());
+  }, [secid]);
 
   return (
-    <ChartCard auto onFresh={() => getCompany(Enums.StockMarketType.AB)}>
+    <ChartCard auto onFresh={() => getCompany(getMarketType())}>
       <div className={styles.content}>
         <div>
           <label>董事长/法人代表：</label>

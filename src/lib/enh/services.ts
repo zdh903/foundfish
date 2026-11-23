@@ -502,15 +502,22 @@ async function getTodayListFromEastmoney(type: string = ""): Promise<any[]> {
   }, []);
 }
 
-async function getRankDataFromEasemoney(params: any): Promise<any[]> {
+// 基金排行榜：datacenter 的 RPT_FUND_NETVALUE 报表已下线，改用天天基金公开榜单脚本。
+// 组件按 `code,name,pinyin,date,dwjz,ljjz,日,周,月` 逗号分隔解析，故直接返回原始字符串行。
+// ft 映射：all=全部 gp=股票 hh=混合 zq=债券 zs=指数 qdii=QDII lof=LOF fof=FOF
+async function getRankDataFromEasemoney(params: any): Promise<string[]> {
+  const ftMap: Record<string, string> = {
+    all: 'all', gp: 'gp', hh: 'hh', zq: 'zq', zs: 'zs',
+    qdii: 'qdii', lof: 'lof', fof: 'fof',
+  };
+  const ft = ftMap[params] || ftMap[String(params?.fundType ?? '')] || 'all';
   return safe(async () => {
-    const { fundType = '0', sort = 'fncl', asc = '0', pn = 1, pz = 50 } = params || {};
-    const url = `${EM_DATAAPI}/api/data/v1/get?reportName=RPT_FUND_NETVALUE&columns=ALL&pageSize=${pz}&pageNumber=${pn}&sortColumns=${sort}&sortTypes=${asc}&source=WEB&client=WEB&filter=(FTYPE=${fundType})`;
-    const data = await readJson<any>(url);
-    return (data?.result?.data || []).map((d: any) => ({
-      code: d.FCODE, name: d.SHORTNAME, dwjz: d.DWJZ, gszzl: d.RZDF,
-      jzrq: d.PDATE, fundType: d.FTYPE,
-    }));
+    const url = `${EM_FUND}/data/rankhandler.aspx?op=ph&dt=kf&ft=${ft}&rs=&gs=0&sc=1n&st=desc&sd=&ed=&qdii=&tabSubtype=,,,,,&pi=1&pn=100&dx=1&v=${Date.now()}`;
+    const text = await readText(url);
+    const m = text.match(/datas\s*:\s*(\[[\s\S]*?\])/);
+    if (!m) return [];
+    const rows = JSON.parse(m[1]);
+    return Array.isArray(rows) ? rows.filter((r: any) => typeof r === 'string') : [];
   }, []);
 }
 
@@ -579,26 +586,36 @@ async function getInverstStyleFromEastmoney(code: string): Promise<any> {
   }, undefined);
 }
 
-async function getSecuritiesWareHouseFromEastmoney(code: string, codes: string = ""): Promise<Fund.WareHouse[]> {
+// 基金持仓：pingzhongdata 只有代码无名称/占比，改用 FundMNInverstPosition 拿真实持仓明细。
+// TEXCH(交易编码)：1=上交所→secid 前缀 1，2=深交所→前缀 0。
+async function fetchFundPosition(code: string, kind: 'stock' | 'bond'): Promise<Fund.WareHouse[]> {
   return safe(async () => {
-    const data = await getFundPageData(code);
-    if (!data) return [];
-    const zqCodes = readJavaScriptValue(data.source, 'zqCodesNew');
-    if (!zqCodes) return [];
-    // Parse bond codes string
-    const codes = typeof zqCodes === 'string' ? zqCodes.split(',') : [];
-    return codes.map((c: string) => ({ zxz: '', name: '', code: c, zdf: 0, ccb: '' }));
+    const url = `https://fundmobapi.eastmoney.com/FundMNewApi/FundMNInverstPosition?FCODE=${code}&deviceid=1&plat=Android&product=EFund&version=1`;
+    const data = await readJson<any>(url);
+    const list: any[] = data?.Datas?.[kind === 'stock' ? 'fundStocks' : 'fundBonds'] || [];
+    const isStock = kind === 'stock';
+    return list.map((d: any) => {
+      const exchange = String(d.TEXCH ?? d.NEWTEXCH ?? '');
+      // 债券无 secid 跳转意义，market 置空；股票按交易编码映射市场
+      const market = isStock ? (exchange === '1' ? '1' : exchange === '2' ? '0' : '') : '';
+      return {
+        zxz: d.PCTNVCHGTYPE || '',
+        name: isStock ? (d.GPJC || '') : (d.ZQJC || d.BONDNAME || ''),
+        code: isStock ? (d.GPDM || '') : (d.ZQDM || d.BONDCODE || ''),
+        zdf: Number(isStock ? (d.PCTNVCHG || 0) : (d.PCTNVCHG || 0)) || 0,
+        ccb: String(isStock ? (d.JZBL || '') : (d.JZBL || '')),
+        market,
+      } as Fund.WareHouse;
+    });
   }, []);
 }
 
+async function getSecuritiesWareHouseFromEastmoney(code: string, codes: string = ""): Promise<Fund.WareHouse[]> {
+  return fetchFundPosition(code, 'bond');
+}
+
 async function getStockWareHouseFromEastmoney(code: string, codes: string = ""): Promise<Fund.WareHouse[]> {
-  return safe(async () => {
-    const data = await getFundPageData(code);
-    if (!data) return [];
-    const stockCodes = readJavaScriptValue(data.source, 'stockCodesNew');
-    if (!stockCodes || !Array.isArray(stockCodes)) return [];
-    return stockCodes.map((c: string) => ({ zxz: '', name: '', code: c, zdf: 0, ccb: '' }));
-  }, []);
+  return fetchFundPosition(code, 'stock');
 }
 
 export const Fund= {
@@ -796,19 +813,82 @@ async function stockGetStockRank(fsCode: string = ""): Promise<any[]> {
   }, []);
 }
 async function stockGetStockHoldFunds(secid: string, date: string = ""): Promise<any> { return undefined; }
+// 行业成分股：入参为个股 secid 时，取其所属行业板块的成分股；否则按行业板块列表返回。
+// f13 为市场标识(1沪/0深/北)，用于拼接可点击的 secid。
 async function stockGetIndustryFromEastmoney(secid: string = "", type: number = 2): Promise<Stock.IndustryItem[]> {
   return safe(async () => {
-    const url = `${EM_PUSH2}/api/qt/clist/get?fid=f3&po=1&pz=30&pn=1&fs=m:90+t:${type}&fields=f12,f14,f2,f3,f4`;
+    let fs = `m:90+t:${type}`;
+    // 个股 secid（如 1.600519）→ 先查所属行业板块代码（f127）
+    if (/^\d+\.\d{6}$/.test(secid)) {
+      const detail = await readJson<any>(`${EM_PUSH2}/api/qt/stock/get?secid=${secid}&fields=f127`);
+      const bk = detail?.data?.f127;
+      if (bk) fs = `b:${bk}`;
+    }
+    const url = `${EM_PUSH2}/api/qt/clist/get?fid=f3&po=1&pz=50&pn=1&fs=${encodeURIComponent(fs)}&fields=f12,f13,f14,f2,f3,f4`;
     const data = await readJson<any>(url);
-    return (data?.data?.diff || []).map((d: any) => ({
-      code: d.f12, name: d.f14, zxj: d.f2 ?? 0, zdf: d.f3 ?? 0, zde: d.f4 ?? 0,
+    const raw = data?.data?.diff || [];
+    const list: any[] = Array.isArray(raw) ? raw : Object.values(raw);
+    return list.map((d: any) => ({
+      code: d.f12 || '',
+      name: d.f14 || '',
+      secid: `${d.f13 ?? 0}.${d.f12}`,
+      zxj: d.f2 ?? 0,
+      zdf: d.f3 ?? 0,
+      zde: d.f4 ?? 0,
     }));
   }, []);
 }
-async function stockGetABCompany(code: string): Promise<Stock.Company | undefined> { return undefined; }
-async function stockGetHKCompany(code: string): Promise<Stock.Company | undefined> { return undefined; }
-async function stockGetUSCompany(code: string): Promise<Stock.Company | undefined> { return undefined; }
-async function stockGetXSBCompany(code: string): Promise<Stock.Company | undefined> { return undefined; }
+// 公司简介：东财 F10 各市场 PageAjax 返回 gzip JSON（主进程 undici 自动解压）。
+// A股字段最全(PC_HSF10)；港股字段较少(PC_HKF10)；美股/新三板无公开 F10，用行情快照尽力补充。
+function normalizeCompany(d: any, market: 'ab' | 'hk'): Stock.Company {
+  if (market === 'ab') {
+    return {
+      gsjs: d.ORG_PROFILE || '',
+      sshy: d.EM2016 || d.INDUSTRYCSRC1 || '',
+      dsz: d.CHAIRMAN || d.LEGAL_PERSON || '',
+      zcdz: d.REG_ADDRESS || d.ADDRESS || '',
+      clrq: d.FOUND_DATE || d.SETUP_DATE || '',
+      ssrq: d.LISTING_DATE || '',
+    };
+  }
+  // 港股：zqzl 节点
+  return {
+    gsjs: d.gsjj || d.companyProfile || '',
+    sshy: d.bk || d.hy || '',
+    dsz: d.dsz || d.chairman || '',
+    zcdz: d.dz || d.address || '',
+    clrq: d.clrq || d.foundDate || '',
+    ssrq: d.ssrq || d.listDate || '',
+  };
+}
+
+async function stockGetABCompany(code: string): Promise<Stock.Company | undefined> {
+  return safe(async () => {
+    // 兼容纯代码(600519)与 secid(1.600519)
+    const raw = String(code).split('.').pop() || '';
+    const m = /^(6|9)/.test(raw) ? 'SH' : /^(0|3)/.test(raw) ? 'SZ' : /^(8|4)/.test(raw) ? 'BJ' : 'SH';
+    const url = `https://emweb.securities.eastmoney.com/PC_HSF10/CompanySurvey/PageAjax?code=${m}${raw}`;
+    const data = await readJson<any>(url);
+    const jbzl = data?.jbzl?.[0];
+    return jbzl ? normalizeCompany(jbzl, 'ab') : undefined;
+  }, undefined);
+}
+async function stockGetHKCompany(code: string): Promise<Stock.Company | undefined> {
+  return safe(async () => {
+    const raw = String(code).split('.').pop() || '';
+    const url = `https://emweb.securities.eastmoney.com/PC_HKF10/CompanyProfile/PageAjax?code=${raw}`;
+    const data = await readJson<any>(url);
+    const info = data?.zqzl || data?.company || data;
+    return info ? normalizeCompany(info, 'hk') : undefined;
+  }, undefined);
+}
+async function stockGetUSCompany(code: string): Promise<Stock.Company | undefined> {
+  // 美股无公开 F10 明细接口，返回 undefined 由前端显示"暂无"，避免返回误导性空对象
+  return undefined;
+}
+async function stockGetXSBCompany(code: string): Promise<Stock.Company | undefined> {
+  return undefined;
+}
 async function stockGetCloseDayDates(): Promise<{ MKT: string; SDATE: string; EDATE: string; HOLIDAY: string }[]> {
   return safe(async () => {
     const url = `${EM_DATAAPI}/api/data/v1/get?reportName=RPT_TYCJK_HDAYINFO&columns=ALL&pageSize=200&pageNumber=1&sortColumns=SDATE&sortTypes=-1&source=WEB&client=WEB`;
@@ -1081,7 +1161,14 @@ async function zindexGetEconomyIndexFromEastmoney(table: string = "", fields: st
     return data?.result?.data || [];
   }, []);
 }
-async function zindexGetNationalTeamDetail(type: string = ""): Promise<any> { return undefined; }
+// 国家队持股个股明细：datacenter RPT_NATIONAL_STATISTICS，字段与 Details 组件完全对应。
+async function zindexGetNationalTeamDetail(type: string = ""): Promise<any[]> {
+  return safe(async () => {
+    const url = `${EM_DATAAPI}/api/data/v1/get?reportName=RPT_NATIONAL_STATISTICS&columns=ALL&pageSize=100&pageNumber=1&source=WEB&client=WEB`;
+    const data = await readJson<any>(url);
+    return data?.result?.data || [];
+  }, []);
+}
 async function zindexGetNationalTeamDistributed(): Promise<{ MARKETCAPRATIO_SUM_0: number; MARKETCAPRATIO_SUM_1: number; MARKETCAPRATIO_SUM_2: number; REPORT_DATE: string }> {
   return safe(async () => {
     const url = `${EM_DATAAPI}/api/data/v1/get?reportName=RPT_FUNDSHOLD_MARKETCAP&columns=REPORT_DATE,MARKETCAPRATIO_SUM_0,MARKETCAPRATIO_SUM_1,MARKETCAPRATIO_SUM_2&pageSize=1&pageNumber=1&sortColumns=REPORT_DATE&sortTypes=-1&source=WEB&client=WEB`;
@@ -1182,12 +1269,21 @@ async function quotationGetQuotationDetailFromEastmoney(code: string): Promise<Q
   }, undefined);
 }
 
-async function quotationGetFundFlowFromEastmoney(code: string, type: string = ""): Promise<any> {
+// 区域/行业/概念资金流：fs 为板块范围(如 m:90+t:1)，type 为周期字段(f62今日/f164五日/f174十日)
+// clist 返回对象/数组两种形态，统一归一化为 {name, value}[]（value 单位：亿元）
+async function quotationGetFundFlowFromEastmoney(code: string, type: string = ""): Promise<any[]> {
   return safe(async () => {
-    const url = `${EM_PUSH2}/api/qt/ulist.get?secid=${code}&fields=f12,f14,f62,f184,f66,f69,f72,f75,f78,f81,f84,f87,f64,f65,f70,f76,f82`;
+    const fid = type || 'f62';
+    const url = `${EM_PUSH2}/api/qt/clist/get?fid=${fid}&po=1&pz=50&pn=1&fs=${encodeURIComponent(code)}&fields=f12,f14,f62,f164,f174`;
     const data = await readJson<any>(url);
-    return data?.data;
-  }, undefined);
+    const raw = data?.data?.diff || [];
+    // diff 可能是数组或下标对象
+    const list: any[] = Array.isArray(raw) ? raw : Object.values(raw);
+    return list.map((d: any) => ({
+      name: d.f14 || '',
+      value: Number(d[fid] ?? d.f62 ?? 0) / 1e8,
+    }));
+  }, []);
 }
 
 async function quotationGetFlowFromEastmoney(fields: string, code: string = ""): Promise<any[]> {
@@ -1198,11 +1294,27 @@ async function quotationGetFlowFromEastmoney(fields: string, code: string = ""):
   }, []);
 }
 
+// 主题基金列表：改用天天基金公开榜单脚本（原 stock/get 快照不含基金字段）。
+// 字段序：code,name,pinyin,type,近1周,近1月,近3月,近6月,近1年,...
+// 组件期望 {FCODE, SHORTNAME, SYL_Z(周), SYL_Y(月), SYL_1N(年)}
 async function quotationGetFundsFromEastmoney(code: string): Promise<any[]> {
   return safe(async () => {
-    const url = `${EM_PUSH2}/api/qt/stock/get?secid=${code}&fields=f57,f58,f62,f184,f66,f69,f72,f75,f78,f81,f84,f87`;
-    const data = await readJson<any>(url);
-    return data?.data ? [data.data] : [];
+    const url = `${EM_FUND}/data/FundGuideapi.aspx?dt=0&ft=&sd=&ed=&sc=z&st=desc&pi=1&pn=50&zf=diy&sh=list&v=${Date.now()}`;
+    const text = await readText(url);
+    const m = text.match(/datas\s*:\s*(\[[\s\S]*?\])/);
+    if (!m) return [];
+    const rows = JSON.parse(m[1]);
+    return (Array.isArray(rows) ? rows : []).filter((r: any) => typeof r === 'string').map((row: string) => {
+      const p = row.split(',');
+      return {
+        FCODE: p[0] || '',
+        SHORTNAME: p[1] || '',
+        code: p[0] || '',
+        SYL_Z: p[4] ?? '',
+        SYL_Y: p[5] ?? '',
+        SYL_1N: p[8] ?? '',
+      };
+    });
   }, []);
 }
 
@@ -1242,11 +1354,22 @@ async function quotationGetAfterTimeFundFlowFromEasymoney(code: string): Promise
   }, []);
 }
 
+// 实时交易构成饼图：从当日资金流净额按档位拆出流入/流出（净额为正计入流入，为负计入流出）。
+// 组件期望 {cddlr,ddlr,zdlr,xdlr,xdlc,zdlc,ddlc,cddlc}，单位亿元。
 async function quotationGetTransactionFromEasymoney(code: string): Promise<any> {
   return safe(async () => {
-    const url = `${EM_PUSH2}/api/qt/stock/get?secid=${code}&fields=f43,f47,f48,f50,f57,f58,f168,f169,f170`;
+    const url = `${EM_PUSH2}/api/qt/stock/get?secid=${code}&fields=f62,f66,f72,f78,f84,f184&fltt=2`;
     const data = await readJson<any>(url);
-    return data?.data;
+    const d = data?.data;
+    if (!d) return undefined;
+    const yi = (v: any) => (Number(v) || 0) / 1e8;
+    // f66超大单 f72大单 f78中单 f84小单 净额；流入取正值，流出取负值绝对值
+    const split = (v: any) => { const n = Math.abs(yi(v)); return { in: n > 0 && yi(v) > 0 ? n : 0, out: n > 0 && yi(v) < 0 ? n : 0 }; };
+    const cd = split(d.f66), dd = split(d.f72), zd = split(d.f78), xd = split(d.f84);
+    return {
+      cddlr: cd.in, ddlr: dd.in, zdlr: zd.in, xdlr: xd.in,
+      cddlc: cd.out, ddlc: dd.out, zdlc: zd.out, xdlc: xd.out,
+    };
   }, undefined);
 }
 
@@ -1284,11 +1407,28 @@ async function quotationGetSouthDayFromEastmoney(fields: string = "", type: stri
   }, { sh2hk: [], sz2hk: [], n2s: [] });
 }
 
+// 涨跌分布：全市场上涨/下跌/平盘家数（f104/f105/f106），映射为组件兼容的 {name,value} 档位。
+// name 为涨跌幅区间档（-11跌停 -10..10平 11涨停），此处以三档汇总填充，缺口为 0。
 async function quotationGetDistributionFromEastmoney(code: string = ""): Promise<any[]> {
   return safe(async () => {
-    const url = `${EM_PUSH2}/api/qt/stock/get?secid=${code}&fields=f57,f58,f62,f184,f66,f69,f72,f75,f78,f81,f84,f87`;
+    const url = `${EM_PUSH2}/api/qt/ulist.np/get?fltt=2&secids=1.000001,0.399001&fields=f104,f105,f106`;
     const data = await readJson<any>(url);
-    return data?.data ? [data.data] : [];
+    const diff = data?.data?.diff || [];
+    const list: any[] = Array.isArray(diff) ? diff : Object.values(diff);
+    const up = list.reduce((s, d) => s + (Number(d?.f104) || 0), 0);
+    const down = list.reduce((s, d) => s + (Number(d?.f105) || 0), 0);
+    const flat = list.reduce((s, d) => s + (Number(d?.f106) || 0), 0);
+    if (!up && !down && !flat) return [];
+    // 构造 23 档：跌停(-11) / -10..10 / 涨停(11)，把汇总量放在代表档
+    const result: any[] = [];
+    for (let i = -11; i <= 11; i++) {
+      let value = 0;
+      if (i === -11) value = down;
+      else if (i === 11) value = up;
+      else if (i === 0) value = flat;
+      result.push({ name: String(i), value });
+    }
+    return result;
   }, []);
 }
 
@@ -1337,8 +1477,57 @@ async function quotationGetGBTrendFromEastmoney(): Promise<any[]> {
     return parseKlines(data?.data?.klines).map((item) => ({ name: item.date, val: item.sp }));
   }, []);
 }
-async function quotationGetTopicZDTCountFromEastmoney(): Promise<any> { return undefined; }
-async function quotationGetTopicFBFailedFromEastmoney(): Promise<any> { return undefined; }
+// 涨停/跌停家数分时：东财当日池子含首次封板时间(fbt)，按分钟桶累积统计，构造日内时间序列。
+// t 为 HHMM 数值（组件用 dayjs().set('hours', t/100).set('minutes', t%100) 格式化）。
+const ZT_UT = '7eea3edcaed734bea9cbfc24409ed989';
+function todayYMD(): string {
+  const d = new Date();
+  return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+}
+function toHHMM(value: any): number {
+  const s = String(value ?? '').padStart(4, '0');
+  const h = parseInt(s.slice(0, -2), 10) || 9;
+  const m = parseInt(s.slice(-2), 10) || 30;
+  return h * 100 + m;
+}
+async function fetchPool(kind: 'ZT' | 'DT' | 'ZB'): Promise<any[]> {
+  return safe(async () => {
+    const url = `https://push2ex.eastmoney.com/getTopic${kind}Pool?ut=${ZT_UT}&dpt=wz.ztzt&Pageindex=0&pagesize=200&sort=fbt%3Aasc&date=${todayYMD()}`;
+    const data = await readJson<any>(url);
+    const pool = data?.data?.pool || [];
+    return Array.isArray(pool) ? pool : Object.values(pool);
+  }, []);
+}
+async function quotationGetTopicZDTCountFromEastmoney(): Promise<{ t: number; ztc: number; dtc: number }[]> {
+  const [zt, dt] = await Promise.all([fetchPool('ZT'), fetchPool('DT')]);
+  if (!zt.length && !dt.length) return [];
+  // 收集所有封板时间点，排序后累积计数
+  const points = new Set<number>([930]);
+  zt.forEach((d: any) => points.add(toHHMM(d.fbt)));
+  dt.forEach((d: any) => points.add(toHHMM(d.fbt)));
+  const times = [...points].filter((t) => t >= 930 && t <= 1500).sort((a, b) => a - b);
+  return times.map((t) => ({
+    t,
+    ztc: zt.filter((d: any) => toHHMM(d.fbt) <= t).length,
+    dtc: dt.filter((d: any) => toHHMM(d.fbt) <= t).length,
+  }));
+}
+async function quotationGetTopicFBFailedFromEastmoney(): Promise<{ t: number; zbp: number; c: number }[]> {
+  const [zt, zb] = await Promise.all([fetchPool('ZT'), fetchPool('ZB')]);
+  if (!zt.length && !zb.length) return [];
+  const points = new Set<number>([930]);
+  zb.forEach((d: any) => points.add(toHHMM(d.fbt)));
+  const times = [...points].filter((t) => t >= 930 && t <= 1500).sort((a, b) => a - b);
+  return times.map((t) => {
+    const failed = zb.filter((d: any) => toHHMM(d.fbt) <= t).length;
+    const sealed = zt.length; // 当前封板数（近似）
+    return {
+      t,
+      zbp: sealed + failed > 0 ? (failed / (sealed + failed)) * 100 : 0,
+      c: failed,
+    };
+  });
+}
 async function quotationGetGoldTrendsFromEastmoney(secid: string = ""): Promise<any[]> {
   return safe(async () => {
     const url = `${EM_PUSH2HIS}/api/qt/stock/kline/get?secid=${secid || '0.AU'}&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58&klt=101&fqt=1&beg=19900101&end=20500101`;
@@ -1560,8 +1749,25 @@ export const Time= {
 
 // ─── Log ─────────────────────────────────────────────────────────
 
-async function logGetLog(): Promise<any[]> {
-  return [];
+// 更新日志：改用 GitHub Releases API（原实现为空数组）。
+interface UpdateLog { version: string; date: string; contents: string[] }
+async function logGetLog(): Promise<UpdateLog[]> {
+  return safe(async () => {
+    const data = await readJson<any[]>(
+      'https://api.github.com/repos/zdh903/foundfish/releases?per_page=20',
+      { Accept: 'application/vnd.github+json' }
+    );
+    if (!Array.isArray(data)) return [];
+    return data.map((r: any) => ({
+      version: r.tag_name || '',
+      date: r.published_at || r.created_at || '',
+      contents: String(r.body || '')
+        .split('\n')
+        .map((line: string) => line.replace(/^[\s*\-]+/, '').trim())
+        .filter(Boolean)
+        .slice(0, 20),
+    }));
+  }, []);
 }
 
 export const Log= {

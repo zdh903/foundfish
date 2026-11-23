@@ -101,6 +101,7 @@ declare namespace Fund {
     code: string;
     zdf: number;
     ccb: string;
+    market?: string;
   }
 
   // "000001","HXCZHH","华夏成长混合","混合型","HUAXIACHENGZHANGHUNHE"
