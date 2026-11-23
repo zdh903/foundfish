@@ -1,9 +1,54 @@
-.estimate {
-  img {
-    border-radius: 5px;
-    width: 100%;
-    display: block;
-    height: auto;
-    object-fit: cover;
+.list {
+  padding: 10px 14px;
+  font-size: 12px;
+}
+
+.average {
+  padding-bottom: 10px;
+  margin-bottom: 6px;
+  border-bottom: 1px solid var(--border-color);
+  color: var(--secondary-main-text-color);
+
+  strong {
+    color: var(--main-text-color);
+    font-size: 15px;
+    margin-left: 6px;
   }
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+}
+
+.name {
+  flex: 0 0 64px;
+}
+
+.bar {
+  flex: 1;
+  height: 8px;
+  background: var(--border-color);
+  border-radius: 4px;
+  overflow: hidden;
+
+  i {
+    display: block;
+    height: 100%;
+    background: var(--increase-color);
+    border-radius: 4px;
+  }
+}
+
+.score {
+  flex: 0 0 36px;
+  text-align: right;
+}
+
+.empty {
+  padding: 24px 0;
+  text-align: center;
+  color: var(--secondary-main-text-color);
 }

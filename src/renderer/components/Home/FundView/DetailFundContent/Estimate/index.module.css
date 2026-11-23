@@ -1,9 +1,19 @@
-.estimate {
-  img {
-    border-radius: 5px;
-    width: 100%;
-    display: block;
-    height: auto;
-    object-fit: cover;
+.info {
+  padding: 10px 14px;
+  font-size: 13px;
+}
+
+.row {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-color);
+
+  &:last-child {
+    border-bottom: none;
+  }
+
+  span:first-child {
+    color: var(--secondary-main-text-color);
   }
 }

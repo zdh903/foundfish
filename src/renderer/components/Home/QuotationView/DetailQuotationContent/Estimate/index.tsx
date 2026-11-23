@@ -15,6 +15,7 @@ const Estimate: React.FC<EstimateProps> = ({ secid }) => {
     pollingInterval: CONST.DEFAULT.ESTIMATE_FUND_DELAY,
     onSuccess: setEstimate,
     refreshDeps: [secid],
+    ready: !!secid,
   });
 
   return (

@@ -108,6 +108,69 @@ async function safe<T>(fn: () => Promise<T>, fallback: T): Promise<T> {
   try { return await fn(); } catch { return fallback; }
 }
 
+// ─── K线/资金流字符串解析 ────────────────────────────────────────
+// 东方财富 kline/get 与 fflow/daykline 均返回逗号分隔的字符串数组，
+// 渲染层组件期望结构化对象。此处统一解析，避免各接口重复处理。
+
+// 标准K线：f51日期,f52开盘,f53收盘,f54最高,f55最低,f56成交量,f57成交额,f58振幅
+function parseKlines(klines: string[]): any[] {
+  return (klines || []).map((line) => {
+    const p = String(line).split(',');
+    return {
+      date: p[0] || '',
+      kp: Number(p[1]) || 0,   // 开盘
+      sp: Number(p[2]) || 0,   // 收盘
+      zg: Number(p[3]) || 0,   // 最高
+      zd: Number(p[4]) || 0,   // 最低
+      cjl: Number(p[5]) || 0,  // 成交量
+      cje: Number(p[6]) || 0,  // 成交额
+      zf: Number(p[7]) || 0,   // 振幅
+    };
+  });
+}
+
+// 资金流K线：f51日期/时间,f52主力,f53小单,f54中单,f55大单,f56超大单,f57-f61占比,f62指数收盘价
+// timeAxis=true 时把 datetime 转为毫秒时间戳，供 type:'time' 的 ECharts 轴使用
+function parseFundFlowKlines(klines: string[], timeAxis: boolean = false): any[] {
+  return (klines || []).map((line) => {
+    const p = String(line).split(',');
+    const rawTime = p[0] || '';
+    return {
+      datetime: timeAxis ? new Date(rawTime.replace(' ', 'T')).getTime() : rawTime,
+      zljlr: Number(p[1]) || 0,   // 主力净流入
+      xdjlr: Number(p[2]) || 0,   // 小单净流入
+      zdjlr: Number(p[3]) || 0,   // 中单净流入
+      ddjlr: Number(p[4]) || 0,   // 大单净流入
+      cddjlr: Number(p[5]) || 0,  // 超大单净流入
+    };
+  });
+}
+
+// 分时走势：f51时间,f52价格,f53均价,f54成交量,f55成交额
+function parseTrends(trends: string[]): Zindex.TrendItem[] {
+  return (trends || []).map((line) => {
+    const p = String(line).split(',');
+    return {
+      time: p[0] || '',
+      price: Number(p[1]) || 0,
+      cjl: Number(p[4]) || 0,
+    };
+  });
+}
+
+// 分时图图片URL：webquotepic 是东方财富公开的分时图图片接口，nid 为 secid
+function getPicTrendUrl(secid: string): string {
+  return `https://webquotepic.eastmoney.com/GetPic.aspx?imageType=r&nid=${encodeURIComponent(secid)}&_=${Date.now()}`;
+}
+
+// K线字符串 → 二维数组 [[日期, 开, 收, 低, 高, 量], ...]，供黄金/指数走势图使用
+function parseKlinesMatrix(klines: string[]): any[] {
+  return (klines || []).map((line) => {
+    const p = String(line).split(',');
+    return [p[0] || '', Number(p[1]) || 0, Number(p[2]) || 0, Number(p[4]) || 0, Number(p[3]) || 0, Number(p[5]) || 0];
+  });
+}
+
 // ─── Fund ────────────────────────────────────────────────────────
 
 async function getFundPageData(code: string) {
@@ -348,7 +411,7 @@ async function fromEastmoney(code: string): Promise<Fund.ResponseItem | undefine
         const isStale = !result.gsz || result.gsz === result.dwjz;
         if (isStale) {
           let estimate: { gsz: string; gszzl: string; gztime: string } | null = null;
-          // 尝试获取实时估值，失败时保留最新单位净值
+          // Priority: LOF/ETF exchange price → tracking index → top-10 holdings
           estimate = await estimateFromExchange(code, result.dwjz);
           if (!estimate) {
             const pageData = await getFundPageData(code);
@@ -588,11 +651,46 @@ async function stockFromEastmoney(secid: string): Promise<Stock.ResponseItem | u
   }, undefined);
 }
 
+// 东财搜索 Classify → StockMarketType 枚举值（与 renderer/utils/enums.ts 保持一致）
+// AB=1, Zindex=2, Quotation=3, HK=4, US=5, UK=6, XSB=7, Fund=8, Bond=9, Futures=10, Exchange=11
+const SEARCH_CLASSIFY_TYPE: Record<string, number> = {
+  AStock: 1,
+  Index: 2,
+  '24': 2,
+  BK: 3,
+  HK: 4,
+  UsStock: 5,
+  UKStock: 6,
+  Fund: 8,
+  Bond: 9,
+  Futures: 10,
+  Exchange: 11,
+};
+const SEARCH_TYPE_NAME: Record<number, string> = {
+  1: 'AB股', 2: '指数', 3: '板块', 4: '港股', 5: '美股',
+  6: '英股', 7: '三板', 8: '基金', 9: '债券', 10: '期货', 11: '外汇',
+};
+
 async function stockSearchFromEastmoney(keyword: string): Promise<Stock.SearchResult[]> {
   return safe(async () => {
-    const url = `${EM_SEARCH}/api/suggest/get?input=${encodeURIComponent(keyword)}&type=14&token=D43BF722C8E33BDC906FB84D85E326E8&count=5`;
+    const url = `${EM_SEARCH}/api/suggest/get?input=${encodeURIComponent(keyword)}&type=14&token=D43BF722C8E33BDC906FB84D85E326E8&count=10`;
     const data = await readJson<any>(url);
-    return data?.QuotationCodeTable?.Data || [];
+    const items: any[] = data?.QuotationCodeTable?.Data || [];
+    // 东财返回扁平列表，渲染层按 {Type, Name, Datas} 分组消费，此处按类型聚合
+    const groups = new Map<number, any[]>();
+    for (const item of items) {
+      const type = SEARCH_CLASSIFY_TYPE[String(item.Classify)];
+      if (!type) continue;
+      if (!groups.has(type)) groups.set(type, []);
+      groups.get(type)!.push({
+        Code: item.Code || '',
+        Name: item.Name || '',
+        ID: item.ID || '',
+        MktNum: item.MktNum || '',
+        SecurityType: item.SecurityType || '',
+      });
+    }
+    return Array.from(groups, ([Type, Datas]) => ({ Type, Name: SEARCH_TYPE_NAME[Type] || '', Count: Datas.length, Datas }));
   }, []);
 }
 
@@ -652,16 +750,12 @@ async function stockGetKFromEastmoney(secid: string, klt: number = 101, fqt: num
   return safe(async () => {
     const url = `${EM_PUSH2HIS}/api/qt/stock/kline/get?secid=${secid}&fields1=f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13&fields2=f51,f52,f53,f54,f55,f56,f57,f58&klt=${klt}&fqt=${fqt}&beg=19900101&end=20500101`;
     const data = await readJson<any>(url);
-    return data?.data?.klines || [];
+    return parseKlines(data?.data?.klines);
   }, []);
 }
 
 async function stockGetPicTrendFromEastmoney(secid: string): Promise<any> {
-  return safe(async () => {
-    const url = `${EM_PUSH2}/api/qt/stock/get?secid=${secid}&fields=f43,f57,f58,f60,f169,f170&fltt=2`;
-    const data = await readJson<any>(url);
-    return data?.data;
-  }, undefined);
+  return getPicTrendUrl(secid);
 }
 
 async function stockGetMainRankFromEastmoney(type: string = ""): Promise<any[]> {
@@ -964,11 +1058,7 @@ async function zindexGetTrendFromEastmoney(code: string, type: string = ""): Pro
     // push2his 线路实测稳定（push2 的 trends2 常被 RST）
     const url = `${EM_PUSH2HIS}/api/qt/stock/trends2/get?secid=${code}&fields1=f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13&fields2=f51,f52,f53,f54,f55,f56,f57,f58&iscr=0&ndays=1&fltt=2`;
     const data = await readJson<any>(url);
-    const trends = data?.data?.trends || [];
-    return trends.map((t: string) => {
-      const parts = t.split(',');
-      return { time: parts[0] || '', price: Number(parts[1]) || 0, cjl: Number(parts[4]) || 0 };
-    });
+    return parseTrends(data?.data?.trends);
   }, []);
 }
 
@@ -976,16 +1066,12 @@ async function zindexGetKFromEastmoney(code: string, klt: number = 101, fqt: num
   return safe(async () => {
     const url = `${EM_PUSH2HIS}/api/qt/stock/kline/get?secid=${code}&fields1=f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13&fields2=f51,f52,f53,f54,f55,f56,f57,f58&klt=${klt}&fqt=${fqt}&beg=19900101&end=20500101`;
     const data = await readJson<any>(url);
-    return data?.data?.klines || [];
+    return parseKlines(data?.data?.klines);
   }, []);
 }
 
 async function zindexGetPicTrendFromEastmoney(code: string): Promise<any> {
-  return safe(async () => {
-    const url = `${EM_PUSH2}/api/qt/stock/get?secid=${code}&fields=f43,f57,f58,f60,f169,f170&fltt=2`;
-    const data = await readJson<any>(url);
-    return data?.data;
-  }, undefined);
+  return getPicTrendUrl(code);
 }
 
 async function zindexGetEconomyIndexFromEastmoney(table: string = "", fields: string = ""): Promise<any[]> {
@@ -1108,7 +1194,7 @@ async function quotationGetFlowFromEastmoney(fields: string, code: string = ""):
   return safe(async () => {
     const url = `${EM_PUSH2HIS}/api/qt/stock/fflow/daykline/get?secid=${code}&fields1=f1,f2,f3,f7&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f62,f63&lmt=30`;
     const data = await readJson<any>(url);
-    return data?.data?.klines || [];
+    return parseFundFlowKlines(data?.data?.klines);
   }, []);
 }
 
@@ -1140,19 +1226,19 @@ async function quotationGetMainFundFromEastmoney(code: string = ""): Promise<any
   }, []);
 }
 
-async function quotationGetRealTimeFundFlowFromEasymoney(code: string): Promise<any> {
+async function quotationGetRealTimeFundFlowFromEasymoney(code: string): Promise<any[]> {
   return safe(async () => {
-    const url = `${EM_PUSH2}/api/qt/stock/get?secid=${code}&fields=f57,f58,f62,f184,f66,f69,f72,f75,f78,f81,f84,f87`;
+    const url = `${EM_PUSH2}/api/qt/stock/fflow/kline/get?secid=${code}&fields1=f1,f2,f3,f7&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61&lmt=0&klt=1`;
     const data = await readJson<any>(url);
-    return data?.data;
-  }, undefined);
+    return parseFundFlowKlines(data?.data?.klines, true);
+  }, []);
 }
 
 async function quotationGetAfterTimeFundFlowFromEasymoney(code: string): Promise<any[]> {
   return safe(async () => {
     const url = `${EM_PUSH2HIS}/api/qt/stock/fflow/daykline/get?secid=${code}&fields1=f1,f2,f3,f7&fields2=f51,f52,f53,f54,f55,f56,f57,f58&lmt=5`;
     const data = await readJson<any>(url);
-    return data?.data?.klines || [];
+    return parseFundFlowKlines(data?.data?.klines);
   }, []);
 }
 
@@ -1164,12 +1250,14 @@ async function quotationGetTransactionFromEasymoney(code: string): Promise<any> 
   }, undefined);
 }
 
-async function quotationGet2MarketVolume(): Promise<any> {
+async function quotationGet2MarketVolume(): Promise<any[]> {
   return safe(async () => {
-    const url = `${EM_PUSH2}/api/qt/ulist.get?secid=1.000001,0.399001&fields=f12,f14,f43,f47,f48,f170`;
+    const url = `${EM_PUSH2}/api/qt/ulist.np/get?fltt=2&secids=1.000001,0.399001&fields=f48`;
     const data = await readJson<any>(url);
-    return data?.data;
-  }, undefined);
+    const diff = data?.data?.diff || [];
+    // 固定顺序：上证、深证；f48 为成交额（元）
+    return [Number(diff[0]?.f48) || 0, Number(diff[1]?.f48) || 0];
+  }, []);
 }
 
 async function quotationGetNorthDayFromEastmoney(fields: string = "", type: string = ""): Promise<{ s2n: any[]; hk2sh: any[]; hk2sz: any[] }> {
@@ -1246,7 +1334,7 @@ async function quotationGetGBTrendFromEastmoney(): Promise<any[]> {
   return safe(async () => {
     const url = `${EM_PUSH2HIS}/api/qt/stock/kline/get?secid=0.399001&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58&klt=101&fqt=1&beg=19900101&end=20500101`;
     const data = await readJson<any>(url);
-    return data?.data?.klines || [];
+    return parseKlines(data?.data?.klines).map((item) => ({ name: item.date, val: item.sp }));
   }, []);
 }
 async function quotationGetTopicZDTCountFromEastmoney(): Promise<any> { return undefined; }
@@ -1255,14 +1343,14 @@ async function quotationGetGoldTrendsFromEastmoney(secid: string = ""): Promise<
   return safe(async () => {
     const url = `${EM_PUSH2HIS}/api/qt/stock/kline/get?secid=${secid || '0.AU'}&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58&klt=101&fqt=1&beg=19900101&end=20500101`;
     const data = await readJson<any>(url);
-    return data?.data?.klines || [];
+    return parseKlines(data?.data?.klines).map((item) => [new Date(item.date).getTime(), item.sp]);
   }, []);
 }
 async function quotationGetGoldKFromEastmoney(): Promise<any[]> {
   return safe(async () => {
     const url = `${EM_PUSH2HIS}/api/qt/stock/kline/get?secid=0.AU&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58&klt=102&fqt=1&beg=19900101&end=20500101`;
     const data = await readJson<any>(url);
-    return data?.data?.klines || [];
+    return parseKlinesMatrix(data?.data?.klines);
   }, []);
 }
 async function quotationGetShanghaiGoldFuturesFromEastmoney(): Promise<any[]> {

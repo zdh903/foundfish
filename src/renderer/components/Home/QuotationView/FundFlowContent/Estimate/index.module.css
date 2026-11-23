@@ -1,9 +1,48 @@
-.estimate {
-  img {
-    border-radius: 5px;
-    width: 100%;
+.list {
+  padding: 8px 14px;
+  font-size: 12px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+}
+
+.name {
+  flex: 0 0 88px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bar {
+  flex: 1;
+  height: 8px;
+  background: var(--border-color);
+  border-radius: 4px;
+  overflow: hidden;
+  display: flex;
+  justify-content: flex-end;
+
+  i {
     display: block;
-    height: auto;
-    object-fit: cover;
+    height: 100%;
+    border-radius: 4px;
   }
+}
+
+.barUp {
+  background: var(--increase-color);
+}
+
+.barDown {
+  background: var(--reduce-color);
+}
+
+.empty {
+  padding: 24px 0;
+  text-align: center;
+  color: var(--secondary-main-text-color);
 }
