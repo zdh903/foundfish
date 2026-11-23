@@ -1,0 +1,36 @@
+.content {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+
+.wallet {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px;
+  height: 64px;
+  width: 64px;
+  box-sizing: border-box;
+
+  cursor: pointer;
+  border-radius: 50%;
+
+  img {
+    width: 36px;
+    height: 36px;
+    transition: transform 0.2s;
+  }
+
+  &:hover {
+    img {
+      transform: scale(1.2);
+    }
+  }
+}
+
+.selected {
+  img {
+    transform: scale(1.2);
+  }
+}

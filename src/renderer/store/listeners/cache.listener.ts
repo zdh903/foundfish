@@ -1,0 +1,21 @@
+import listenerMiddleware from '@/store/listeners';
+import { syncFundRatingMapAction, syncRemoteFundsMapAction } from '@/store/features/fund';
+import * as CONST from '@/constants';
+
+const electronStore = window.contextModules.electronStore;
+
+const cacheListener = () => {
+  listenerMiddleware.startListening({
+    actionCreator: syncRemoteFundsMapAction,
+    effect: async (action) => {
+      electronStore.set('cache', CONST.STORAGE.REMOTE_FUND_MAP, action.payload);
+    },
+  });
+  listenerMiddleware.startListening({
+    actionCreator: syncFundRatingMapAction,
+    effect: async (action) => {
+      electronStore.set('cache', CONST.STORAGE.FUND_RATING_MAP, action.payload);
+    },
+  });
+};
+export default cacheListener;

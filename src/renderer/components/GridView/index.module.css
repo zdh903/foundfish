@@ -1,0 +1,33 @@
+.content {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+
+  border-left: 1px solid var(--border-color);
+}
+.item {
+  padding: 8px var(--base-padding);
+  border-right: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--border-color);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  &:hover {
+    filter: brightness(102%);
+  }
+}
+.name {
+  font-weight: 500;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  word-break: break-all;
+  flex: 1;
+  color: var(--main-text-color);
+}
+.change {
+  flex-shrink: 0;
+  margin-left: 6px;
+  font-weight: 600;
+}

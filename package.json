@@ -1,0 +1,183 @@
+{
+  "name": "foundfish",
+  "productName": "FoundFish",
+  "version": "1.0.0",
+  "description": "基金净值追踪桌面应用，基于 Electron 开发，支持 macOS、Windows 和 Linux。",
+  "main": "release/app/dist/main/index.mjs",
+  "scripts": {
+    "quick-preview": "bash ./scripts/quick-preview.command",
+    "quick-preview-web": "FOUNDFISH_RENDERER_HOST=127.0.0.1 electron-vite dev --rendererOnly",
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "build:icon": "electron-icon-builder --input=./build/icon.png --output=./icon-build",
+    "package": "npm run build && electron-builder build -p never",
+    "package-mac": "npm run build && ARCH=\"$(uname -m)\" && if [ \"$ARCH\" = \"arm64\" ]; then ARCH=arm64; else ARCH=x64; fi; electron-builder build --mac --$ARCH --dir --publish never",
+    "package-mac-app": "pnpm package-mac && ARCH=\"$(uname -m)\" && APP_PATH=\"release/build/mac\" && if [ \"$ARCH\" = \"arm64\" ]; then APP_PATH=\"${APP_PATH}-arm64\"; fi && if [ ! -d \"${APP_PATH}\" ]; then APP_PATH=\"release/build/mac\"; fi && rm -rf \"${HOME}/Applications/FoundFish.app\" && cp -R \"${APP_PATH}/FoundFish.app\" \"${HOME}/Applications/FoundFish.app\" && echo \"App已放到 ${HOME}/Applications/FoundFish.app\"",
+    "package-mac-app-system": "pnpm package-mac-app && sudo rm -rf '/Applications/FoundFish.app' && sudo cp -R \"${HOME}/Applications/FoundFish.app\" '/Applications/FoundFish.app'",
+    "package-mac-app-home": "pnpm package-mac-app",
+    "package-all": "npm run build && electron-builder build -mwl -p never",
+    "release-all": "npm run build && electron-builder build -mwl -p always",
+    "beta-mac": "npm run build && electron-builder build -m -p always",
+    "beta-all": "npm run build && electron-builder build -mw -p always"
+  },
+  "build": {
+    "productName": "FoundFish",
+    "appId": "com.foundfish.app",
+    "asar": true,
+    "copyright": "Copyright © 2026 FoundFish Contributors",
+    "files": [
+      "dist"
+    ],
+    "directories": {
+      "app": "release/app",
+      "output": "release/build",
+      "buildResources": "build"
+    },
+    "extraResources": [
+      "assets"
+    ],
+    "fileAssociations": [
+      {
+        "ext": "ff",
+        "role": "Editor",
+        "description": "FoundFish 备份文件",
+        "icon": "build/icon"
+      }
+    ],
+    "mac": {
+      "extendInfo": {
+        "LSUIElement": "false"
+      },
+      "electronLanguages": ["zh_CN", "en"],
+      "target": {
+        "target": "dmg",
+        "arch": [
+          "x64",
+          "arm64"
+        ]
+      }
+    },
+    "dmg": {
+      "contents": [
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
+    },
+    "win": {
+      "target": {
+        "target": "nsis",
+        "arch": [
+          "x64"
+        ]
+      }
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "linux": {
+      "target": {
+        "target": "AppImage",
+        "arch": [
+          "x64",
+          "arm64"
+        ]
+      },
+      "category": "Financial"
+    },
+    "publish": null
+  },
+  "author": "FoundFish Contributors",
+  "license": "GPL-3.0",
+  "keywords": [
+    "electron",
+    "react",
+    "redux",
+    "macos",
+    "linux",
+    "homebrew",
+    "menubar",
+    "typescript",
+    "bitcoin",
+    "stock",
+    "cryptocurrency",
+    "alipay",
+    "wechat",
+    "chinese",
+    "antd",
+    "echarts",
+    "funds"
+  ],
+  "devDependencies": {
+    "@reduxjs/toolkit": "^2.11.2",
+    "@types/color": "^4.2.0",
+    "@types/color-hash": "^2.0.0",
+    "@types/node": "^24.10.1",
+    "@types/react": "^19.2.8",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.2",
+    "@vitejs/plugin-react-swc": "^4.2.2",
+    "ahooks": "^3.9.6",
+    "antd": "^6.1.4",
+    "babel-plugin-react-compiler": "^1.0.0",
+    "cheerio": "^1.1.2",
+    "clsx": "^2.1.1",
+    "color": "^5.0.3",
+    "color-hash": "^2.0.2",
+    "comlink": "^4.4.2",
+    "compare-versions": "^6.1.1",
+    "dayjs": "^1.11.19",
+    "echarts": "^6.0.0",
+    "electron": "^40.0.0",
+    "electron-builder": "^26.4.0",
+    "electron-icon-builder": "^2.0.1",
+    "electron-vite": "5.0.0",
+    "generate-react-cli": "^9.1.0",
+    "hxc3-indicator-formula": "^1.0.9",
+    "js-base64": "^3.7.8",
+    "number-precision": "^1.6.0",
+    "query-string": "^9.3.1",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
+    "react-icons": "^5.5.0",
+    "react-redux": "^9.2.0",
+    "react-router-dom": "^7.12.0",
+    "react-sortablejs": "^6.1.4",
+    "redux": "^5.0.1",
+    "sortablejs": "^1.15.6",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1"
+  },
+  "dependencies": {
+    "@json2csv/plainjs": "^7.0.6",
+    "@nivalis/string-similarity": "5.0.0",
+    "electron-log": "^5.4.3",
+    "electron-store": "^10.0.1",
+    "electron-updater": "^6.7.3",
+    "electron-window-state": "^5.0.3",
+    "fetch-socks": "^1.3.2",
+    "menubar": "^9.5.2",
+    "openai": "^6.16.0",
+    "postcss-nesting": "^14.0.0",
+    "undici": "^7.18.2"
+  },
+  "devEngines": {
+    "runtime": {
+      "name": "node",
+      "version": ">=22.8.x",
+      "onFail": "error"
+    }
+  },
+  "pnpm": {
+    "neverBuiltDependencies": []
+  }
+}
