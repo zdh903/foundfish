@@ -150,10 +150,12 @@ function parseFundFlowKlines(klines: string[], timeAxis: boolean = false): any[]
 function parseTrends(trends: string[]): Zindex.TrendItem[] {
   return (trends || []).map((line) => {
     const p = String(line).split(',');
+    // f51时间, f52最新价, f53均价, f54最高, f55最低, f56成交量, f58均价
+    // 多日模式下非首日 09:30 的最新价为 0（接口占位），用均价兜底，避免虚假低点
     return {
       time: p[0] || '',
-      price: Number(p[1]) || 0,
-      cjl: Number(p[4]) || 0,
+      price: Number(p[1]) || Number(p[7]) || 0,
+      cjl: Number(p[5]) || 0,
     };
   });
 }
@@ -1133,10 +1135,12 @@ async function zindexFromFallback(code: string): Promise<Zindex.ResponseItem | u
   }, undefined);
 }
 
-async function zindexGetTrendFromEastmoney(code: string, type: string = ""): Promise<Zindex.TrendItem[]> {
+async function zindexGetTrendFromEastmoney(code: string, type: string = "1"): Promise<Zindex.TrendItem[]> {
   return safe(async () => {
+    // ndays 支持 1-5 日分时，组件传入的 type 即天数；限制在 1-5 防止越界
+    const ndays = Math.min(5, Math.max(1, Number(type) || 1));
     // push2his 线路实测稳定（push2 的 trends2 常被 RST）
-    const url = `${EM_PUSH2HIS}/api/qt/stock/trends2/get?secid=${code}&fields1=f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13&fields2=f51,f52,f53,f54,f55,f56,f57,f58&iscr=0&ndays=1&fltt=2`;
+    const url = `${EM_PUSH2HIS}/api/qt/stock/trends2/get?secid=${code}&fields1=f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13&fields2=f51,f52,f53,f54,f55,f56,f57,f58&iscr=0&ndays=${ndays}&fltt=2`;
     const data = await readJson<any>(url);
     return parseTrends(data?.data?.trends);
   }, []);

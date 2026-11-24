@@ -53,10 +53,15 @@ const Trend: React.FC<PerformanceProps> = ({ code, zs = 0, name }) => {
         },
         xAxis: {
           type: 'category',
-          data: result.map(({ time, price }) => time) || [],
+          data: result.map(({ time }) => time) || [],
           boundaryGap: false,
           axisLabel: {
             fontSize: 10,
+            // 多日分时标签很长，只显示月日+时间的核心部分，并按间隔抽样避免重叠
+            formatter: (value: string, index: number) => {
+              if (result.length > 300 && index % Math.ceil(result.length / 8) !== 0) return '';
+              return value.length > 11 ? value.slice(5) : value;
+            },
           },
         },
         yAxis: {
@@ -77,7 +82,10 @@ const Trend: React.FC<PerformanceProps> = ({ code, zs = 0, name }) => {
         dataZoom: [
           {
             type: 'inside',
-            minValueSpan: 3600 * 24 * 1000 * 1,
+            // 多日分时点数可达近千，限制最小缩放窗口为总量的 5%，保证可拖动查看
+            minValueSpan: Math.max(1, Math.floor(result.length * 0.05)),
+            zoomOnMouseWheel: true,
+            moveOnMouseMove: true,
           },
         ],
         series: [
