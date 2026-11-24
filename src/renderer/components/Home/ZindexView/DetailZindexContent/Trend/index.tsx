@@ -17,21 +17,20 @@ export interface PerformanceProps {
 }
 const trendTypeList = [
   { name: '一天', type: 1, code: 1 },
-  { name: '7天', type: 7, code: 7 },
-  { name: '1月', type: 30, code: 30 },
-  { name: '3月', type: 90, code: 90 },
-  { name: '6月', type: 180, code: 180 },
-  { name: '1年', type: 365, code: 365 },
+  { name: '两天', type: 2, code: 2 },
+  { name: '三天', type: 3, code: 3 },
+  { name: '四天', type: 4, code: 4 },
+  { name: '五天', type: 5, code: 5 },
 ];
 const Trend: React.FC<PerformanceProps> = ({ code, zs = 0, name }) => {
   const { ref: chartRef, chartInstance } = useResizeEchart(CONST.DEFAULT.ECHARTS_SCALE);
   const [trend, setTrendType] = useState(trendTypeList[0]);
   const { data: result = [], run: runGetTrendFromEastmoney } = useRequest(
-    () => Services.Zindex.GetRangeTrendFromEastmoney(code, trend.code),
+    () => Services.Zindex.GetTrendFromEastmoney(code, String(trend.code)),
     {
       refreshDeps: [code, trend.code, zs],
       ready: !!chartInstance,
-      cacheKey: Utils.GenerateRequestKey('Zindex.GetRangeTrendFromEastmoney', [code, trend.code]),
+      cacheKey: Utils.GenerateRequestKey('Zindex.GetTrendFromEastmoney', [code, trend.code]),
     }
   );
 
@@ -58,11 +57,10 @@ const Trend: React.FC<PerformanceProps> = ({ code, zs = 0, name }) => {
           boundaryGap: false,
           axisLabel: {
             fontSize: 10,
-            // 分时标签含时间、日K仅日期；统一截取月日，并按间隔抽样避免重叠
+            // 多日分时标签很长，只显示月日+时间的核心部分，并按间隔抽样避免重叠
             formatter: (value: string, index: number) => {
-              const step = Math.max(1, Math.ceil(result.length / 8));
-              if (result.length > 12 && index % step !== 0) return '';
-              return value.length > 10 ? value.slice(5, 16) : value.slice(5);
+              if (result.length > 300 && index % Math.ceil(result.length / 8) !== 0) return '';
+              return value.length > 11 ? value.slice(5) : value;
             },
           },
         },
@@ -78,9 +76,8 @@ const Trend: React.FC<PerformanceProps> = ({ code, zs = 0, name }) => {
               color: 'var(--border-color)',
             },
           },
-          // 仅一天分时以昨收为基准；长周期走势按自身数据范围自适应
-          min: trend.code === 1 ? (value: any) => Math.min(value.min, zs) : undefined,
-          max: trend.code === 1 ? (value: any) => Math.max(value.max, zs) : undefined,
+          min: (value: any) => Math.min(value.min, zs),
+          max: (value: any) => Math.max(value.max, zs),
         },
         dataZoom: [
           {
@@ -100,12 +97,7 @@ const Trend: React.FC<PerformanceProps> = ({ code, zs = 0, name }) => {
             symbol: 'none',
             lineStyle: {
               width: 1,
-              // 一天用「最新价-昨收」定色；长周期用「末日-首日」区间涨跌定色
-              color: Utils.GetValueColor(
-                trend.code === 1
-                  ? Number(result[result.length - 1]?.price) - zs
-                  : Number(result[result.length - 1]?.price) - Number(result[0]?.price)
-              ).color,
+              color: Utils.GetValueColor(Number(result[result.length - 1]?.price) - zs).color,
             },
             markPoint: {
               symbol: 'pin',
@@ -115,17 +107,19 @@ const Trend: React.FC<PerformanceProps> = ({ code, zs = 0, name }) => {
                 { type: 'min', label: { fontSize: 10 } },
               ],
             },
-            markLine:
-              trend.code === 1
-                ? {
-                    symbol: 'none',
-                    label: {
-                      position: 'insideEndBottom',
-                      fontSize: 10,
-                    },
-                    data: [{ name: '昨收', yAxis: zs }],
-                  }
-                : undefined,
+            markLine: {
+              symbol: 'none',
+              label: {
+                position: 'insideEndBottom',
+                fontSize: 10,
+              },
+              data: [
+                {
+                  name: '昨收',
+                  yAxis: zs,
+                },
+              ],
+            },
           },
         ],
       });

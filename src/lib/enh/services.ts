@@ -116,15 +116,19 @@ async function safe<T>(fn: () => Promise<T>, fallback: T): Promise<T> {
 function parseKlines(klines: string[]): any[] {
   return (klines || []).map((line) => {
     const p = String(line).split(',');
+    const kp = Number(p[1]) || 0;   // 开盘
+    const sp = Number(p[2]) || 0;   // 收盘
     return {
       date: p[0] || '',
-      kp: Number(p[1]) || 0,   // 开盘
-      sp: Number(p[2]) || 0,   // 收盘
+      kp,
+      sp,
       zg: Number(p[3]) || 0,   // 最高
       zd: Number(p[4]) || 0,   // 最低
       cjl: Number(p[5]) || 0,  // 成交量
       cje: Number(p[6]) || 0,  // 成交额
       zf: Number(p[7]) || 0,   // 振幅
+      // 涨跌幅：东财 f51-f58 不含涨跌幅，用「收盘-开盘/开盘」近似，供量柱着色
+      zdf: kp ? Number((((sp - kp) / kp) * 100).toFixed(2)) : 0,
     };
   });
 }
@@ -765,9 +769,15 @@ async function stockGetTrendFromEastmoney(secid: string): Promise<{ trends: Stoc
   }, { trends: [] });
 }
 
-async function stockGetKFromEastmoney(secid: string, klt: number = 101, fqt: number = 1): Promise<any[]> {
+// 第三个参数为「回溯天数」（组件传 360/1080/... 或年数），换算为 beg 日期；fqt 固定前复权=1
+function klineBegFromDays(days: number): string {
+  const d = new Date(Date.now() - Math.max(1, days) * 24 * 60 * 60 * 1000);
+  return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+}
+
+async function stockGetKFromEastmoney(secid: string, klt: number = 101, days: number = 360): Promise<any[]> {
   return safe(async () => {
-    const url = `${EM_PUSH2HIS}/api/qt/stock/kline/get?secid=${secid}&fields1=f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13&fields2=f51,f52,f53,f54,f55,f56,f57,f58&klt=${klt}&fqt=${fqt}&beg=19900101&end=20500101`;
+    const url = `${EM_PUSH2HIS}/api/qt/stock/kline/get?secid=${secid}&fields1=f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13&fields2=f51,f52,f53,f54,f55,f56,f57,f58&klt=${klt}&fqt=1&beg=${klineBegFromDays(days)}&end=20500101`;
     const data = await readJson<any>(url);
     return parseKlines(data?.data?.klines);
   }, []);
@@ -1146,34 +1156,11 @@ async function zindexGetTrendFromEastmoney(code: string, type: string = "1"): Pr
   }, []);
 }
 
-async function zindexGetKFromEastmoney(code: string, klt: number = 101, fqt: number = 1): Promise<any[]> {
+async function zindexGetKFromEastmoney(code: string, klt: number = 101, days: number = 360): Promise<any[]> {
   return safe(async () => {
-    const url = `${EM_PUSH2HIS}/api/qt/stock/kline/get?secid=${code}&fields1=f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13&fields2=f51,f52,f53,f54,f55,f56,f57,f58&klt=${klt}&fqt=${fqt}&beg=19900101&end=20500101`;
+    const url = `${EM_PUSH2HIS}/api/qt/stock/kline/get?secid=${code}&fields1=f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13&fields2=f51,f52,f53,f54,f55,f56,f57,f58&klt=${klt}&fqt=1&beg=${klineBegFromDays(days)}&end=20500101`;
     const data = await readJson<any>(url);
     return parseKlines(data?.data?.klines);
-  }, []);
-}
-
-// 跨周期走势：1 天用分时（盘中细粒度），7 天及以上用日 K 收盘价（trends2 仅支持 1-5 日）
-// range 为自然日天数，返回结构与分时一致 { time, price, cjl }
-async function zindexGetRangeTrendFromEastmoney(code: string, range: number = 1): Promise<Zindex.TrendItem[]> {
-  // 1 天：复用分时接口
-  if (range <= 1) {
-    return zindexGetTrendFromEastmoney(code, '1');
-  }
-  return safe(async () => {
-    // 按自然日回算起始日期（东财只返回交易日，跨度由日期范围决定）
-    const end = new Date();
-    const start = new Date(end.getTime() - range * 24 * 60 * 60 * 1000);
-    const fmt = (d: Date) => `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
-    const url = `${EM_PUSH2HIS}/api/qt/stock/kline/get?secid=${code}&fields1=f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13&fields2=f51,f52,f53,f54,f55,f56,f57,f58&klt=101&fqt=1&beg=${fmt(start)}&end=${fmt(end)}`;
-    const data = await readJson<any>(url);
-    // parseKlines: { date, kp, sp(收盘), zg, zd, cjl(成交量), ... }
-    return parseKlines(data?.data?.klines).map((k: any) => ({
-      time: k.date,
-      price: k.sp,
-      cjl: k.cjl,
-    }));
   }, []);
 }
 
@@ -1235,7 +1222,6 @@ export const Zindex= {
   FromEastmoney: zindexFromEastmoney,
   FromEastmoneyBatch: zindexFromEastmoneyBatch,
   GetTrendFromEastmoney: zindexGetTrendFromEastmoney,
-  GetRangeTrendFromEastmoney: zindexGetRangeTrendFromEastmoney,
   GetKFromEastmoney: zindexGetKFromEastmoney,
   GetPicTrendFromEastmoney: zindexGetPicTrendFromEastmoney,
   GetEconomyIndexFromEastmoney: zindexGetEconomyIndexFromEastmoney,

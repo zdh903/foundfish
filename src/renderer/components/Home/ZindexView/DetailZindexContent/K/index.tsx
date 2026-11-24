@@ -27,11 +27,11 @@ const kTypeList = [
 ];
 
 const yearTypeList = [
-  { name: '一年', type: 1, code: 1 },
-  { name: '三年', type: 2, code: 3 },
-  { name: '五年', type: 3, code: 5 },
-  { name: '十年', type: 4, code: 10 },
-  { name: '最大', type: 5, code: 50 },
+  { name: '一年', type: 1, code: 360 },
+  { name: '三年', type: 2, code: 1080 },
+  { name: '五年', type: 3, code: 1800 },
+  { name: '十年', type: 4, code: 3600 },
+  { name: '最大', type: 5, code: 10000 },
 ];
 
 const chartTypeList = [
@@ -48,11 +48,11 @@ const K: React.FC<KProps> = ({ code = '', name }) => {
   const [chart, setChartType] = useState(chartTypeList[0]);
   const [year, setYearType] = useState(yearTypeList[0]);
   const { data: result = [], run: runGetKFromEastmoney } = useRequest(
-    () => Services.Zindex.GetKFromEastmoney(code, year.code, k.code),
+    () => Services.Zindex.GetKFromEastmoney(code, k.code, year.code),
     {
-      refreshDeps: [code, year.code, k.code],
+      refreshDeps: [code, k.code, year.code],
       ready: !!chartInstance,
-      cacheKey: Utils.GenerateRequestKey('Zindex.GetKFromEastmoney', [code, year.code, k.code]),
+      cacheKey: Utils.GenerateRequestKey('Zindex.GetKFromEastmoney', [code, k.code, year.code]),
     }
   );
 
