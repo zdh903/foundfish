@@ -1154,6 +1154,29 @@ async function zindexGetKFromEastmoney(code: string, klt: number = 101, fqt: num
   }, []);
 }
 
+// 跨周期走势：1 天用分时（盘中细粒度），7 天及以上用日 K 收盘价（trends2 仅支持 1-5 日）
+// range 为自然日天数，返回结构与分时一致 { time, price, cjl }
+async function zindexGetRangeTrendFromEastmoney(code: string, range: number = 1): Promise<Zindex.TrendItem[]> {
+  // 1 天：复用分时接口
+  if (range <= 1) {
+    return zindexGetTrendFromEastmoney(code, '1');
+  }
+  return safe(async () => {
+    // 按自然日回算起始日期（东财只返回交易日，跨度由日期范围决定）
+    const end = new Date();
+    const start = new Date(end.getTime() - range * 24 * 60 * 60 * 1000);
+    const fmt = (d: Date) => `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+    const url = `${EM_PUSH2HIS}/api/qt/stock/kline/get?secid=${code}&fields1=f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13&fields2=f51,f52,f53,f54,f55,f56,f57,f58&klt=101&fqt=1&beg=${fmt(start)}&end=${fmt(end)}`;
+    const data = await readJson<any>(url);
+    // parseKlines: { date, kp, sp(收盘), zg, zd, cjl(成交量), ... }
+    return parseKlines(data?.data?.klines).map((k: any) => ({
+      time: k.date,
+      price: k.sp,
+      cjl: k.cjl,
+    }));
+  }, []);
+}
+
 async function zindexGetPicTrendFromEastmoney(code: string): Promise<any> {
   return getPicTrendUrl(code);
 }
@@ -1212,6 +1235,7 @@ export const Zindex= {
   FromEastmoney: zindexFromEastmoney,
   FromEastmoneyBatch: zindexFromEastmoneyBatch,
   GetTrendFromEastmoney: zindexGetTrendFromEastmoney,
+  GetRangeTrendFromEastmoney: zindexGetRangeTrendFromEastmoney,
   GetKFromEastmoney: zindexGetKFromEastmoney,
   GetPicTrendFromEastmoney: zindexGetPicTrendFromEastmoney,
   GetEconomyIndexFromEastmoney: zindexGetEconomyIndexFromEastmoney,
