@@ -28,7 +28,7 @@ FoundFish 是一个常驻状态栏的行情追踪工具：基金净值、沪深�
 
 ## 下载
 
-前往 [Releases](https://github.com/zdh903/foundfish/releases) 下载对应平台的安装包。
+前往 [下载页](https://www.ggtime.com/tools/fundfish/) 获取安装包，提供百度网盘与夸克网盘两种渠道。
 
 - macOS：`.dmg`（支持 Apple Silicon 与 Intel）
 - Windows：`.exe`
